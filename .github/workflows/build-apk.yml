@@ -1,0 +1,70 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Collect web files
+        run: |
+          mkdir -p app/www
+          cp index.html style.css script.js manifest.webmanifest favicon.ico xlsx.full.min.js font-latin.woff2 font-latin-ext.woff2 *.png app/www/
+
+      - name: Create Android project
+        working-directory: app
+        run: |
+          npm init -y
+          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/filesystem@7 @capacitor/share@7 @capacitor/assets
+          npx cap init "Inc Exp" com.nasal.incexp --web-dir www
+          npx cap add android
+
+      - name: Make app icons
+        run: |
+          pip install pillow
+          mkdir -p app/assets
+          python3 - <<'EOF'
+          from PIL import Image
+          a = Image.open('icon-1024.png').convert('RGBA')
+          a.save('app/assets/icon-only.png')
+          Image.new('RGBA', (1024, 1024), (3, 43, 77, 255)).save('app/assets/icon-background.png')
+          fg = Image.new('RGBA', (1024, 1024), (0, 0, 0, 0))
+          s = int(1024 * 0.66)
+          fg.alpha_composite(a.resize((s, s), Image.LANCZOS), ((1024 - s) // 2, (1024 - s) // 2))
+          fg.save('app/assets/icon-foreground.png')
+          EOF
+          cd app
+          npx capacitor-assets generate --android
+
+      - name: Build APK
+        working-directory: app
+        run: |
+          npx cap sync android
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Name the APK
+        run: cp app/android/app/build/outputs/apk/debug/app-debug.apk IncExp.apk
+
+      - name: Publish APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: Inc Exp app (build ${{ github.run_number }})
+          files: IncExp.apk
